@@ -473,14 +473,14 @@ async function start() {
     quad.material = discBlur;
     quad.render(renderer);
 
-    // ----- room + reflections, then the tub, the beam, dust and drips -----
+    // ----- room + reflections, then the haze in the beam, the tub over it, dust and drips -----
     renderer.setRenderTarget(mainRT);
     renderer.clear(false, true, false);
     quad.material = composite;
     quad.render(renderer);
-    if (!OFF.has('tub')) renderer.render(tubScene, camera);
     quad.material = beam;
     if (!OFF.has('beam')) quad.render(renderer);
+    if (!OFF.has('tub')) renderer.render(tubScene, camera);
     renderer.render(fxScene, camera);
 
     // ----- lens glow: bright areas at quarter size, blurred -----

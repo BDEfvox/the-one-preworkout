@@ -43,6 +43,8 @@ Built with [three.js](https://threejs.org/).
 | `src/fx.js` | Strip light flicker and swing, drips, dust, the beam |
 | `src/post.js` | Compositing, depth of field, lens glow, film grain, colour grade |
 | `src/main.js` | Baking at load and the per-frame loop |
+| `test/check.mjs` | End-to-end check: loading, resizing, pausing, and whether the lighting follows the lamps |
+| `CHANGES.md` | What changed in the rework and why, with old and new values |
 
 ## Run locally
 
@@ -51,4 +53,4 @@ npm install
 npm run dev
 ```
 
-Then open http://localhost:5220. `npm run build` writes the minified `bundle.js`.
+Then open http://localhost:5220. `npm run build` writes the minified `bundle.js`. `npm test` checks the built page in headless Chrome (it uses the Chrome installed on your machine).

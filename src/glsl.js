@@ -87,6 +87,23 @@ float tubHit(vec3 ro, vec3 rd) {
   }
   return -1.0;
 }
+// How much of the light from direction L (a unit vector pointing up towards the lamp) the tub
+// blocks at point p: 0 to 1, with soft edges. Used for its shadow in the haze.
+float tubShade(vec3 p, vec3 L) {
+  float R = tubShape.x;
+  float a = dot(L.xz, L.xz);
+  if (a < 1.0e-9) return 0.0;
+  float b = dot(p.xz, L.xz);
+  float c = dot(p.xz, p.xz) - R * R;
+  float h = b * b - a * c;
+  if (h <= 0.0) return 0.0;
+  h = sqrt(h);
+  float s1 = max((-b - h) / a, 0.0), s2 = (-b + h) / a;
+  if (s2 <= 0.0) return 0.0;
+  // the heights between which the ray is over the tub's footprint, against the tub's own height
+  float y1 = p.y + s1 * L.y, y2 = p.y + s2 * L.y;
+  return smoothstep(0.0, 0.35, min(y2, tubShape.z) - max(y1, tubShape.y));
+}
 `;
 
 // interleaved gradient noise: a cheap per-pixel random value

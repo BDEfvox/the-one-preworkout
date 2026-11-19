@@ -456,8 +456,9 @@ export function makeBeam() {
           h = sqrt(h);
           float t0 = max((-B - h) / A, 0.0), t1 = (-B + h) / A;
           if (rd.y < 0.0) t1 = min(t1, -camPos.y / rd.y);  // ends at the floor
-          float tt = tubHit(camPos, rd);                   // or at the tub
-          if (tt > 0.0) t1 = min(t1, tt);
+          // (Not cut off at the tub: the tub is drawn over the haze afterwards, so the haze
+          // meets the tub's real outline. Cutting it here against a simplified shape left a
+          // visible sleeve around the tub.)
           if (t1 > t0) {
             float dt = (t1 - t0) / float(STEPS);
             float jitter = ign(gl_FragCoord.xy + fract(time * 7.13) * 91.0);
@@ -466,7 +467,7 @@ export function makeBeam() {
               vec3 p = camPos + rd * (t0 + (float(i) + jitter) * dt);
               float e = keySpot(p);
               if (e <= 0.0) continue;
-              if (tubHit(p, normalize(keyPos - p)) > 0.0) continue;   // in the tub's shadow
+              e *= 1.0 - tubShade(p, normalize(keyPos - p));          // the tub's shadow, soft-edged
               // slow-moving haze, thicker near the floor
               float n = texture(tNoise, p * 0.11 + vec3(time * 0.009, -time * 0.014, time * 0.006)).r;
               float n2 = texture(tNoise, p * 0.31 + vec3(-time * 0.017, time * 0.005, time * 0.011)).r;

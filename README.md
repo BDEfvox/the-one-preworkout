@@ -2,9 +2,11 @@
 
 A real-time product shot in the browser: the cherry tub of One Supplements' "The One" pre-workout, turning slowly and bobbing in an abandoned warehouse gym. One spotlight on the tub, a broken strip light flickering and swinging at the back, water dripping from the roof into puddles on the concrete.
 
+**Live:** https://bdefvox.github.io/the-one-preworkout/
+
 ![Three moments: strip light on, failing, and on again](preview.jpg)
 
-Open `index.html` (double-click works once `bundle.js` is built).
+To run it from disk, open `index.html` (double-click works once `bundle.js` is built).
 
 - Space pauses.
 - `?t=3` in the address shows a still at 3 seconds.

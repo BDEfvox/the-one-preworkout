@@ -95,11 +95,26 @@ The method was to switch layers off one at a time (`?off=`, see the README) and 
 | Spin (`SPIN_SPEED`) | 1.0 rad/s, a turn in 6.3 s | 0.6 rad/s, a turn in 10.5 s |
 | Bob (`BOB_SPEED`) | 2.0 rad/s | 1.5 rad/s |
 
+## 8. Sharp lettering
+
+![The gold band at actual screen pixels on a Retina display. Left: before. Right: after.](docs/text-before-after.png)
+
+**What it was.** The scenery looked right but the label's small print was soft, which is tiring to read on something that moves.
+
+**Causes and fixes.**
+
+- **The picture was stretched.** Everything was rendered at no more than 1440 px a side and the browser enlarged it to fit the window. On a Retina display a window 1000 points tall needs 2000 px, so the picture was enlarged 1.4 times. The room hides that, since it is out of focus; the tub does not. Now the room still renders at up to 1440 px, but the tub is drawn in its own layer at the screen's full resolution (up to 2880 px) and laid over the room at the end (`src/main.js`, `sizeLayer`; `src/post.js`, `withTub`). The layer covers only the part of the frame the tub can occupy.
+- **The label was read from too small a copy of its artwork.** The graphics card keeps the artwork at full size and at half, quarter and so on, and picks by how large it appears. The artwork is 1280 px tall and showed about 530 px tall, so the stock lookup blended the 640 and 320 px copies. Each pixel now reads one size larger, at four points inside the pixel (`src/tub.js`): sharper, and still free of shimmer as the tub turns.
+- **White lettering glowed.** The lens glow started at a brightness of 0.7, below the label's whites, so letters had a faint halo. It now starts at 1.5 and reaches full strength at 3.2 (was 2.2): lamps, their reflections and hard highlights glow, lettering does not.
+- **Film grain** went from 0.04 to 0.028. It is drawn at screen resolution now, so it is also finer on a Retina display.
+
+**Cost.** None: a frame at 2000 px on the canvas takes about 7 ms on an Apple M5, against about 9 ms before at 1440 px, because the room no longer needs anti-aliasing of its own (only the tub's layer does).
+
 ## How it was checked
 
 `npm test` runs `test/check.mjs` in headless Chrome. Results from the final build on an Apple M5:
 
-- **Behaviour:** desktop (1440 px), phone (1170 px) and reduced-motion (700 px) views load with no console errors or warnings. Two resizes in quick succession end at the right size. Space pauses: two frames half a second apart are identical.
+- **Behaviour:** desktop (canvas 1600 px, room 1440 px), phone (1170 px), reduced-motion (700 px) and `?res=1080` views load with no console errors or warnings. A resize that changes only the canvas does not re-bake the room. Two resizes in quick succession end at the right size. Space pauses: two frames half a second apart are identical.
 - **Lighting logic,** over 18 moments that include three failures of the strip light:
 
 | Region | Result |

@@ -161,6 +161,22 @@ export function makeTub(maxAnisotropy, maxTextureSize) {
     metalness: 1.0,
     aoMap: stripTexture(shade),
   });
+  // Small print needs more care than the stock texture lookup gives it. That lookup reads a
+  // pre-shrunk copy of the artwork, usually one size too small, which is what makes text
+  // look soft. Here each pixel reads the next larger copy at four points inside the pixel:
+  // sharp, and still free of shimmer as the tub turns.
+  labelMat.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', /* glsl */`
+      {
+        vec2 dx = dFdx(vMapUv), dy = dFdy(vMapUv);
+        vec4 fine = texture2D(map, vMapUv + 0.125 * dx + 0.375 * dy, -1.0)
+                  + texture2D(map, vMapUv - 0.375 * dx + 0.125 * dy, -1.0)
+                  + texture2D(map, vMapUv + 0.375 * dx - 0.125 * dy, -1.0)
+                  + texture2D(map, vMapUv - 0.125 * dx - 0.375 * dy, -1.0);
+        diffuseColor *= fine * 0.25;
+      }`);
+  };
+  labelMat.customProgramCacheKey = () => 'label-fine';
   const label = new THREE.Mesh(new THREE.CylinderGeometry(r, r, LABEL_H, SEGMENTS, 1, true), labelMat);
   label.position.y = 0.105 + LABEL_H / 2;
   label.rotation.y = Math.PI; // the front panel sits at u = 0.5; turn it to face +Z

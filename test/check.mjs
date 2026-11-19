@@ -26,15 +26,28 @@ async function open(opts, query = '') {
 }
 
 // ---------- 1. behaviour ----------
-for (const [name, opts, query, wantRes] of [
-  ['desktop, 2x screen', { viewport: { width: 1300, height: 800 }, deviceScaleFactor: 2 }, '', 1440],
-  ['phone, 3x screen', { viewport: { width: 390, height: 780 }, deviceScaleFactor: 3 }, 't=1', 1170],
-  ['reduced motion', { viewport: { width: 700, height: 700 }, deviceScaleFactor: 1, reducedMotion: 'reduce' }, '', 700],
+// wantCanvas: the canvas, and the tub, at the screen's own resolution. wantRoom: the room, capped at 1440.
+for (const [name, opts, query, wantCanvas, wantRoom] of [
+  ['desktop, 2x screen', { viewport: { width: 1300, height: 800 }, deviceScaleFactor: 2 }, '', 1600, 1440],
+  ['phone, 3x screen', { viewport: { width: 390, height: 780 }, deviceScaleFactor: 3 }, 't=1', 1170, 1170],
+  ['reduced motion', { viewport: { width: 700, height: 700 }, deviceScaleFactor: 1, reducedMotion: 'reduce' }, '', 700, 700],
+  ['fixed size, ?res=1080', { viewport: { width: 1300, height: 800 }, deviceScaleFactor: 2 }, 'res=1080', 1080, 1080],
 ]) {
   const { ctx, page, logs } = await open(opts, query);
-  const info = await page.evaluate(() => ({ res: document.querySelector('canvas').width, bakeMs: window.__bakeMs, bench: window.__bench(60) }));
+  const info = await page.evaluate(() => ({ canvas: document.querySelector('canvas').width, bakeMs: window.__bakeMs, bench: window.__bench(60) }));
   check(logs.length === 0, `${name}: no console errors or warnings${logs.length ? ' -> ' + logs[0] : ''}`);
-  check(info.res === wantRes, `${name}: renders at ${info.res} px (expected ${wantRes}), baked in ${info.bakeMs} ms, ${info.bench.msPerFrame} ms per frame`);
+  check(info.canvas === wantCanvas && info.bench.res === wantRoom, `${name}: canvas ${info.canvas} px, room ${info.bench.res} px (expected ${wantCanvas} and ${wantRoom}), baked in ${info.bakeMs} ms, ${info.bench.msPerFrame} ms per frame`);
+  await ctx.close();
+}
+{
+  // a resize that changes only the canvas (the room stays at its 1440 cap) must not re-bake
+  const { ctx, page, logs } = await open({ viewport: { width: 900, height: 900 }, deviceScaleFactor: 2 });
+  await page.evaluate(() => { window.__bakeMs = -1; });
+  await page.setViewportSize({ width: 1000, height: 1000 });
+  await page.waitForFunction(() => document.querySelector('canvas').width === 2000, null, { timeout: 5000 }).catch(() => {});
+  const info = await page.evaluate(() => ({ canvas: document.querySelector('canvas').width, rebaked: window.__bakeMs !== -1, ready: window.__ready, bench: window.__bench(10) }));
+  check(info.canvas === 2000 && info.bench.outRes === 2000 && !info.rebaked && info.ready, `canvas-only resize: canvas ${info.canvas} px, no re-bake`);
+  check(logs.length === 0, `canvas-only resize: no console errors or warnings${logs.length ? ' -> ' + logs[0] : ''}`);
   await ctx.close();
 }
 {

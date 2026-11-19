@@ -10,7 +10,7 @@ To run it from disk, open `index.html` (double-click works once `bundle.js` is b
 
 - Space pauses.
 - `?t=3` in the address shows a still at 3 seconds.
-- `?res=1080` renders at exactly 1080 x 1080 (the default cap is 1440).
+- `?res=1080` renders at exactly 1080 x 1080. Without it, the room renders at up to 1440 px and the tub at the screen's full resolution, up to 2880 px.
 - `?calm` steadies the strip light and its swing. This is also what visitors get automatically when their system is set to reduce motion.
 
 For checking the scene piece by piece:
@@ -25,7 +25,9 @@ The camera never moves, so the whole warehouse is rendered once at load into a f
 - the room under its steady lights (the spotlight and the night outside the windows);
 - the room under the strip light alone, at three positions of its swing.
 
-Light adds up, so each frame the room is the first image plus the strip light's images, blended by where it has swung to and scaled by how bright it is at that instant. On top of that, each frame draws only what moves: the tub (twice, once for its reflection in the wet floor), its shadow, the strip light itself, the haze in the spotlight's beam, dust, and the drips with their splashes and rings.
+Light adds up, so each frame the room is the first image plus the strip light's images, blended by where it has swung to and scaled by how bright it is at that instant. The tub is the one thing in sharp focus and it is covered in small print, so it is drawn in its own layer at the screen's full resolution and laid over the room at the end.
+
+On top of that, each frame draws only what moves: the tub (twice, once for its reflection in the wet floor), its shadow, the strip light itself, the haze in the spotlight's beam, dust, and the drips with their splashes and rings.
 
 The lighting follows two lamps and nothing else. The spotlight lights the tub, the pool on the floor and the dust in its beam. The strip light lights the wall, the equipment near it, the sheen on the wet floor, the cold edge on the tub and its own reflection in the puddles, and all of those flicker and go dark with it.
 

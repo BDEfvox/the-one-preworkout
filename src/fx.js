@@ -181,7 +181,7 @@ export function makeDrips(camera, focus) {
   geo.setAttribute('tint', new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
   geo.setIndex(new THREE.BufferAttribute(idx, 1));
   const mat = new THREE.ShaderMaterial({
-    uniforms: { tDepth: { value: null }, res: { value: 1 } },
+    uniforms: { tDepth: { value: null }, res: { value: 1 }, origin: { value: new THREE.Vector2() } },
     vertexShader: /* glsl */`
       attribute vec3 tint;
       varying vec2 vUv;
@@ -196,13 +196,14 @@ export function makeDrips(camera, focus) {
       }`,
     fragmentShader: /* glsl */`
       uniform sampler2D tDepth;
-      uniform float res;
+      uniform float res;     // frame size in pixels of the target being drawn into
+      uniform vec2 origin;   // where this target's corner sits in that frame (for a cropped layer)
       varying vec2 vUv;
       varying vec3 vTint;
       varying float vViewZ;
       void main() {
         // hidden behind the equipment in the baked picture
-        if (texture2D(tDepth, gl_FragCoord.xy / res).r < vViewZ - 0.4) discard;
+        if (texture2D(tDepth, (gl_FragCoord.xy + origin) / res).r < vViewZ - 0.4) discard;
         // a drop drawn out by its own speed: round and bright at the head, thinning to a tail
         float t = vUv.y * 0.5 + 0.5;
         float side = abs(vUv.x) / mix(0.4, 1.0, smoothstep(0.0, 0.8, t));
@@ -307,7 +308,6 @@ export function makeDrips(camera, focus) {
       geo.setDrawRange(0, quads * 6);
       geo.attributes.position.needsUpdate = true;
       geo.attributes.tint.needsUpdate = true;
-      mat.uniforms.res.value = res;
       return states;
     },
   };

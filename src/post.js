@@ -246,22 +246,39 @@ export const makeComposite = () => pass(/* glsl */`
     tubShape: { value: new THREE.Vector3() },
   });
 
+// The tub is drawn into its own layer at the screen's full resolution (see main.js).
+// Its colour is already multiplied by coverage; dust and drips drawn into the same layer
+// count only where they are over the tub, since the room's picture has them everywhere else.
+const LAYER = /* glsl */`
+  uniform sampler2D tLayer;
+  uniform vec4 layerRect;   // where the tub's layer sits on screen
+  vec3 withTub(vec3 scene, vec2 uv) {
+    vec2 luv = (uv - layerRect.xy) / layerRect.zw;
+    if (luv.x <= 0.0 || luv.x >= 1.0 || luv.y <= 0.0 || luv.y >= 1.0) return scene;
+    vec4 l = texture2D(tLayer, luv);
+    return scene * (1.0 - l.a) + l.rgb * step(1.0e-4, l.a);
+  }`;
+const layerUniforms = () => ({ tLayer: { value: null }, layerRect: { value: new THREE.Vector4(0, 0, 1, 1) } });
+
 // Per frame, at quarter resolution: bright areas only, for the lens glow.
 export const makeBloomDown = () => pass(/* glsl */`
   uniform sampler2D tSrc;
   uniform vec2 texel;
   varying vec2 vUv;
+  ${LAYER}
   vec3 bright(vec2 uv) {
-    vec3 c = texture2D(tSrc, uv).rgb;
+    vec3 c = withTub(texture2D(tSrc, uv).rgb, uv);
     float l = max(c.r, max(c.g, c.b));
-    return c * smoothstep(0.7, 2.2, l);
+    // starts above the label's whites, so that lettering stays crisp: only lamps,
+    // their reflections and hard highlights glow
+    return c * smoothstep(1.5, 3.2, l);
   }
   void main() {
     vec3 c = bright(vUv + texel * vec2(-1.0, -1.0)) + bright(vUv + texel * vec2(1.0, -1.0))
            + bright(vUv + texel * vec2(-1.0, 1.0)) + bright(vUv + texel * vec2(1.0, 1.0));
     gl_FragColor = vec4(min(c * 0.25, vec3(60.0)), 1.0);
   }`,
-  { tSrc: { value: null }, texel: { value: new THREE.Vector2() } });
+  { tSrc: { value: null }, texel: { value: new THREE.Vector2() }, ...layerUniforms() });
 
 export const makeBloomBlur = () => pass(/* glsl */`
   uniform sampler2D tSrc;
@@ -276,37 +293,16 @@ export const makeBloomBlur = () => pass(/* glsl */`
   }`,
   { tSrc: { value: null }, dir: { value: new THREE.Vector2() } });
 
-// Per frame: foreground blur (only below the focal line), glow, grain, vignette, tone curve.
-export const makeFinal = () => pass(/* glsl */`
+// Per frame, at the room's resolution: blur of the floor in front of the focal plane
+// (only below the focal line). Input alpha = 1 - near-field blur amount.
+export const makeNearBlur = () => pass(/* glsl */`
   uniform sampler2D tMain;
-  uniform sampler2D tBloom;
-  uniform sampler2D tWide;
   uniform vec2 texel;
   uniform float cocMax;
   uniform float dofTop;   // uv.y above which nothing is out of focus in the foreground
-  uniform float time;
-  uniform float exposure;
-  uniform float bloomGain;
   varying vec2 vUv;
   const int TAPS = 64;
   ${IGN}
-
-  // ACES filmic (Stephen Hill's fit)
-  vec3 rrtOdt(vec3 v) {
-    vec3 a = v * (v + 0.0245786) - 0.000090537;
-    vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081;
-    return a / b;
-  }
-  vec3 aces(vec3 c) {
-    const mat3 inM = mat3(0.59719, 0.07600, 0.02840, 0.35458, 0.90834, 0.13383, 0.04823, 0.01566, 0.83777);
-    const mat3 outM = mat3(1.60475, -0.10208, -0.00327, -0.53108, 1.10813, -0.07276, -0.07367, -0.00605, 1.07602);
-    c *= exposure / 0.6;
-    c = inM * c;
-    c = rrtOdt(c);
-    c = outM * c;
-    return clamp(c, 0.0, 1.0);
-  }
-
   void main() {
     vec4 c = texture2D(tMain, vUv);
     vec3 col = c.rgb;
@@ -329,6 +325,40 @@ export const makeFinal = () => pass(/* glsl */`
       }
       col = sum / wsum;
     }
+    gl_FragColor = vec4(col, 1.0);
+  }`,
+  { tMain: { value: null }, texel: { value: new THREE.Vector2() }, cocMax: { value: 12 }, dofTop: { value: 0.3 } });
+
+// Per frame, at the screen's resolution: the room with the tub's layer over it, then
+// lens glow, vignette, tone curve, grade and grain.
+export const makeFinal = () => pass(/* glsl */`
+  uniform sampler2D tScene;
+  uniform sampler2D tBloom;
+  uniform sampler2D tWide;
+  uniform float time;
+  uniform float exposure;
+  uniform float bloomGain;
+  varying vec2 vUv;
+  ${LAYER}
+
+  // ACES filmic (Stephen Hill's fit)
+  vec3 rrtOdt(vec3 v) {
+    vec3 a = v * (v + 0.0245786) - 0.000090537;
+    vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081;
+    return a / b;
+  }
+  vec3 aces(vec3 c) {
+    const mat3 inM = mat3(0.59719, 0.07600, 0.02840, 0.35458, 0.90834, 0.13383, 0.04823, 0.01566, 0.83777);
+    const mat3 outM = mat3(1.60475, -0.10208, -0.00327, -0.53108, 1.10813, -0.07276, -0.07367, -0.00605, 1.07602);
+    c *= exposure / 0.6;
+    c = inM * c;
+    c = rrtOdt(c);
+    c = outM * c;
+    return clamp(c, 0.0, 1.0);
+  }
+
+  void main() {
+    vec3 col = withTub(texture2D(tScene, vUv).rgb, vUv);
 
     // lens: a tight glow, a wide soft one, and a faint sideways streak off the brightest lamps
     col += texture2D(tBloom, vUv).rgb * (0.05 * bloomGain);
@@ -347,8 +377,8 @@ export const makeFinal = () => pass(/* glsl */`
 
     // film grain, stronger in the mid-tones
     float n = fract(sin(dot(gl_FragCoord.xy + fract(time) * 173.0, vec2(12.9898, 78.233))) * 43758.5453);
-    col += (n - 0.5) * 0.04 * (1.0 - 0.6 * luma);
+    col += (n - 0.5) * 0.028 * (1.0 - 0.6 * luma);
 
     gl_FragColor = vec4(col, 1.0);
   }`,
-  { tMain: { value: null }, tBloom: { value: null }, tWide: { value: null }, texel: { value: new THREE.Vector2() }, cocMax: { value: 12 }, dofTop: { value: 0.3 }, time: { value: 0 }, exposure: { value: 1.0 }, bloomGain: { value: 1 } });
+  { tScene: { value: null }, tBloom: { value: null }, tWide: { value: null }, time: { value: 0 }, exposure: { value: 1.0 }, bloomGain: { value: 1 }, ...layerUniforms() });

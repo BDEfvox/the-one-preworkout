@@ -9,7 +9,7 @@ import { makeRoom } from './room.js';
 import { flicker, sway, makeFixture, makeDrips, makeMotes, makeBeam } from './fx.js';
 import {
   makeAccumulate, makeDepthCopy, makePlateBlur, makeDiscBlur, makeComposite,
-  makeBloomDown, makeBloomBlur, makeFinal,
+  makeNearBlur, makeBloomDown, makeBloomBlur, makeFinal,
 } from './post.js';
 
 // How this stays fast: the camera never moves, so the whole warehouse is
@@ -21,6 +21,10 @@ import {
 // blend of the three strip plates. On top of that each frame draws only what
 // moves: the tub (twice, once for its reflection), the strip light itself, the
 // haze in the spot's beam, dust, and the drips.
+//
+// The room is rendered at no more than 1440 px a side. The tub, the one thing in
+// sharp focus and covered in small print, is drawn in its own layer at the
+// screen's full resolution and laid over the room at the very end.
 
 const params = new URLSearchParams(location.search);
 
@@ -30,7 +34,8 @@ const BOB_SPEED = 1.5;    // rad / s
 const BOB_AMOUNT = 0.085; // world units, the tub is ~1.7 tall
 const HOVER = 0.2;        // mean height of the tub's base above the floor
 
-const MAX_RES = parseInt(params.get('res'), 10) || 1440; // internal square resolution cap
+const MAX_RES = parseInt(params.get('res'), 10) || 1440; // resolution cap for the room
+const MAX_OUT = parseInt(params.get('res'), 10) || 2880; // resolution cap for the canvas and the tub
 const CALM = params.has('calm') || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 const STEADY_SAMPLES = 48;
 const STRIP_SAMPLES = 28;
@@ -168,6 +173,7 @@ async function start() {
   const plateBlur = makePlateBlur();
   const discBlur = makeDiscBlur();
   const composite = makeComposite();
+  const nearBlur = makeNearBlur();
   const final = makeFinal();
   const bloomDown = makeBloomDown();
   const bloomBlur = makeBloomBlur();
@@ -208,10 +214,13 @@ async function start() {
   }
 
   // ---------- buffers that depend on the size ----------
-  let res = 0;
+  let res = 0;      // the room's resolution
+  let outRes = 0;   // the canvas's resolution
   let ready = false;
   let job = { cancelled: false };
-  let plateBase, plateStrip = [], depthRT, data1RT, data2RT, mainRT, fixRT, fixBlurRT, bloomA, bloomB, wideA, wideB;
+  let plateBase, plateStrip = [], depthRT, data1RT, data2RT, mainRT, sceneRT, layerRT, fixRT, fixBlurRT, bloomA, bloomB, wideA, wideB;
+  const layerCam = camera.clone();
+  const layerOrigin = new THREE.Vector2();
   let cocMax = 12, cocScale = 100;
   const fixCam = camera.clone();
   const fixDepth = CAM_POS.z - TUBE.anchor.z;
@@ -227,7 +236,7 @@ async function start() {
     ready = false;
     window.__ready = false;
     res = size;
-    for (const rt of [plateBase, ...plateStrip, depthRT, data1RT, data2RT, mainRT, fixRT, fixBlurRT, bloomA, bloomB, wideA, wideB]) rt?.dispose();
+    for (const rt of [plateBase, ...plateStrip, depthRT, data1RT, data2RT, mainRT, sceneRT, fixRT, fixBlurRT, bloomA, bloomB, wideA, wideB]) rt?.dispose();
     progress.style.opacity = 1;
     const total = STEADY_SAMPLES + 3 * STRIP_SAMPLES;
     let done = 0;
@@ -243,7 +252,8 @@ async function start() {
     const data = () => new THREE.WebGLRenderTarget(res, res, { type: THREE.HalfFloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: true });
     data1RT = data();
     data2RT = data();
-    mainRT = new THREE.WebGLRenderTarget(res, res, { ...hdr, depthBuffer: true, samples: 4 });
+    mainRT = new THREE.WebGLRenderTarget(res, res, { ...hdr, depthBuffer: false });
+    sceneRT = new THREE.WebGLRenderTarget(res, res, { ...hdr, depthBuffer: false });
     const q = Math.round(res / 4);
     bloomA = new THREE.WebGLRenderTarget(q, q, { ...hdr, depthBuffer: false });
     bloomB = new THREE.WebGLRenderTarget(q, q, { ...hdr, depthBuffer: false });
@@ -382,16 +392,17 @@ async function start() {
     composite.uniforms.tDepth.value = depthRT.texture;
     composite.uniforms.tFix.value = fixBlurRT.texture;
     drips.material.uniforms.tDepth.value = depthRT.texture;
-    motes.material.uniforms.res.value = res;
-    motes.material.uniforms.cocScale.value = cocScale;
+    bloomDown.uniforms.tSrc.value = mainRT.texture;
     bloomDown.uniforms.texel.value.set(1 / res, 1 / res);
-    final.uniforms.tMain.value = mainRT.texture;
+    nearBlur.uniforms.tMain.value = mainRT.texture;
+    nearBlur.uniforms.texel.value.set(1 / res, 1 / res);
+    nearBlur.uniforms.cocMax.value = cocMax;
+    const focalLine = new THREE.Vector3(0, 0, CAM_POS.z - focus).project(camera);
+    nearBlur.uniforms.dofTop.value = 0.5 + 0.5 * focalLine.y + (cocMax + 2) / res;
+    final.uniforms.tScene.value = sceneRT.texture;
     final.uniforms.tBloom.value = bloomA.texture;
     final.uniforms.tWide.value = wideA.texture;
-    final.uniforms.texel.value.set(1 / res, 1 / res);
-    final.uniforms.cocMax.value = cocMax;
-    const focalLine = new THREE.Vector3(0, 0, CAM_POS.z - focus).project(camera);
-    final.uniforms.dofTop.value = 0.5 + 0.5 * focalLine.y + (cocMax + 2) / res;
+    sizeLayer();
 
     renderer.setRenderTarget(null);
     window.__bakeMs = Math.round(performance.now() - t0);
@@ -401,17 +412,58 @@ async function start() {
     draw(currentTime());
   }
 
+  // The tub's layer: a crop of the frame around everywhere the tub can be, at the canvas's
+  // resolution, which on a high-density screen is finer than the room's.
+  function sizeLayer() {
+    layerRT?.dispose();
+    const box = new THREE.Box2();
+    const p = new THREE.Vector3();
+    for (const y of [HOVER - BOB_AMOUNT, HOVER + BOB_AMOUNT + TUB.height]) {
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          p.set(sx * TUB.radius, y, sz * TUB.radius).project(camera);
+          box.expandByPoint(new THREE.Vector2(p.x * 0.5 + 0.5, p.y * 0.5 + 0.5));
+        }
+      }
+    }
+    const pad = 8 / outRes;
+    const u0 = Math.max(0, box.min.x - pad), u1 = Math.min(1, box.max.x + pad);
+    const v0 = Math.max(0, box.min.y - pad), v1 = Math.min(1, box.max.y + pad);
+    const x = Math.floor(u0 * outRes), y = Math.floor((1 - v1) * outRes);
+    const w = Math.max(8, Math.ceil(u1 * outRes) - x), h = Math.max(8, Math.ceil((1 - v0) * outRes) - y);
+    layerCam.setViewOffset(outRes, outRes, x, y, w, h);
+    layerRT = new THREE.WebGLRenderTarget(w, h, { ...hdr, depthBuffer: true, samples: 4 });
+    layerOrigin.set(x, outRes - (y + h));
+    for (const m of [final, bloomDown]) {
+      m.uniforms.tLayer.value = layerRT.texture;
+      m.uniforms.layerRect.value.set(x / outRes, 1 - (y + h) / outRes, w / outRes, h / outRes);
+    }
+  }
+
   function layout() {
     const css = Math.floor(Math.min(window.innerWidth, window.innerHeight));
-    const size = Math.max(256, Math.min(Math.round(css * window.devicePixelRatio), MAX_RES));
+    const out = Math.max(256, Math.min(Math.round(css * window.devicePixelRatio), MAX_OUT));
+    const size = Math.min(out, MAX_RES);
     renderer.domElement.style.width = renderer.domElement.style.height = css + 'px';
+    if (out !== outRes) {
+      outRes = out;
+      renderer.setSize(out, out, false);
+      if (size === res && ready) { sizeLayer(); draw(currentTime()); } // a re-bake does this itself
+    }
     if (size !== res) {
       job.cancelled = true;
       job = { cancelled: false };
-      renderer.setSize(size, size, false);
       bake(size, job);
     }
   }
+
+  // dust and drips are drawn twice: with the room, and again in the tub's layer
+  const fxTarget = (size, scale, ox, oy) => {
+    motes.material.uniforms.res.value = size;
+    motes.material.uniforms.cocScale.value = cocScale * scale;
+    drips.material.uniforms.res.value = size;
+    drips.material.uniforms.origin.value.set(ox, oy);
+  };
 
   // ---------- frame ----------
   const stripGlow = new THREE.Color();
@@ -473,18 +525,30 @@ async function start() {
     quad.material = discBlur;
     quad.render(renderer);
 
-    // ----- room + reflections, then the haze in the beam, the tub over it, dust and drips -----
+    // ----- room + reflections, the haze in the beam, dust and drips -----
     renderer.setRenderTarget(mainRT);
-    renderer.clear(false, true, false);
     quad.material = composite;
     quad.render(renderer);
     quad.material = beam;
     if (!OFF.has('beam')) quad.render(renderer);
-    if (!OFF.has('tub')) renderer.render(tubScene, camera);
+    fxTarget(res, 1, 0, 0);
     renderer.render(fxScene, camera);
 
+    // ----- the tub at full resolution, with the dust and drips that pass in front of it -----
+    renderer.setRenderTarget(layerRT);
+    renderer.clear(true, true, false);
+    if (!OFF.has('tub')) {
+      renderer.render(tubScene, layerCam);
+      fxTarget(outRes, outRes / res, layerOrigin.x, layerOrigin.y);
+      renderer.render(fxScene, layerCam);
+    }
+
+    // ----- the floor in front of the focal plane goes out of focus -----
+    renderer.setRenderTarget(sceneRT);
+    quad.material = nearBlur;
+    quad.render(renderer);
+
     // ----- lens glow: bright areas at quarter size, blurred -----
-    bloomDown.uniforms.tSrc.value = mainRT.texture;
     renderer.setRenderTarget(bloomA);
     quad.material = bloomDown;
     quad.render(renderer);
@@ -554,7 +618,7 @@ async function start() {
     const t0 = performance.now();
     for (let i = 0; i < frames; i++) draw(i / 60);
     sync();
-    return { msPerFrame: +((performance.now() - t0) / frames).toFixed(2), res };
+    return { msPerFrame: +((performance.now() - t0) / frames).toFixed(2), res, outRes };
   };
 }
 
